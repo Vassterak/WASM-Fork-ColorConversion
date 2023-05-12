@@ -1,0 +1,369 @@
+﻿@inherits LayoutComponentBase
+@inject IJSRuntime JSRuntime;
+
+<section>
+    <EditForm Model="ditheringSettings">
+        <header>
+            <h2>Settings</h2>
+        </header>
+        @if (imageIsLoaded)
+        {
+            <label for="dithermethod">Dither method:</label>
+            <InputSelect id="dithermethod" @bind-Value="ditheringSettings.ditheringMethod">
+            @foreach (var value in Enum.GetValues(typeof(DitheringMethod)))
+            {
+                <option>@value</option>
+            }
+            </InputSelect>
+            
+            <label for="colorreductionmethod">Color reduction method:</label>
+            <InputSelect id="colorreductionmethod" @bind-Value="colorReductionSettings.colorReductionMethod">
+            @foreach (var value in Enum.GetValues(typeof(ColorReductionMethod)))
+            {
+                <option>@value</option>
+            }
+            </InputSelect>
+            @if (processing)
+            {
+                
+            }
+            else
+            {
+                <button type="button" @onclick="Dither">Convert image to new color space</button>
+            }
+        }
+        else
+        {
+            <p>Please, load an image with <b>Choose File</b> button</p>
+        }
+    </EditForm>
+</section>
+
+@if (processing)
+{
+    <section>
+        <p id="loading">⏳</p>
+    </section>
+}
+else
+{
+    <section>
+        <header>
+            <h3>Original image</h3>
+        </header>
+        <img id="originalImageAsPng" src="@defaultImageAsBase64String" />
+    </section>
+
+    <section>
+        <header>
+            <h3>@dithererName</h3>
+        </header>
+        <img id="ditheredImageAsPng" src="@ditheredImageAsBase64String" />
+    </section>
+}
+
+
+@code {
+
+    [JSInvokable]
+    public static void ImageLoaded()
+    {
+        imageIsLoaded = true;
+        singleton.StateHasChanged();
+    }
+
+    protected override void OnInitialized()
+    {
+        singleton = this;
+    }
+
+    private static DitheringBase<byte> GetDitherer(DitheringMethod method, DitheringBase<byte>.ColorFunction colorfunc) => 
+    method switch
+    {
+        DitheringMethod.Atkinson => new AtkinsonDitheringRGBByte(colorfunc),
+        DitheringMethod.Burkes => new BurkesDitheringRGBByte(colorfunc),
+        DitheringMethod.Fake => new FakeDitheringRGBByte(colorfunc),
+        DitheringMethod.FloydSteinberg => new FloydSteinbergDitheringRGBByte(colorfunc),
+        DitheringMethod.JarvisJudiceNinke => new JarvisJudiceNinkeDitheringRGBByte(colorfunc),
+        DitheringMethod.Sierra => new SierraDitheringRGBByte(colorfunc),
+        DitheringMethod.SierraLite => new SierraLiteDitheringRGBByte(colorfunc),
+        DitheringMethod.SierraTwoRow => new SierraTwoRowDitheringRGBByte(colorfunc),
+        DitheringMethod.Stucki => new StuckiDitheringRGBByte(colorfunc),
+        _ => throw new ArgumentException(message: "invalid dithering", paramName: method.ToString()),
+    };
+
+    private static DitheringBase<byte>.ColorFunction GetColorReductionMethod(ColorReductionMethod method) =>
+    method switch
+    {
+        ColorReductionMethod.EINK7Color => TrueColorBytesTo7Bytes,
+        _ => throw new ArgumentException(message: "invalid color reduction", paramName: method.ToString()),
+    };
+
+    private static void TrueColorBytesToWebSafeColorBytes(in byte[] input, ref byte[] output)
+    {
+        for (int i = 0; i < input.Length; i++)
+        {
+            output[i] = (byte)(Math.Round(input[i] / 51.0) * 51);
+        }
+    }
+
+    private static void TrueColorBytesToEGABytes(in byte[] input, ref byte[] output)
+    {
+        for (int i = 0; i < input.Length; i++)
+        {
+            output[i] = (byte)(Math.Round((byte)input[i] / 85.0) * 85);
+        }
+    }
+
+    private static readonly List<byte[]> fullCGAColors = new List<byte[]>() 
+    {
+        new byte[] { 0x00, 0x00, 0x00 }, // black
+        new byte[] { 0x00, 0x00, 0xAA }, // blue
+        new byte[] { 0x00, 0xAA, 0x00 }, // green
+        new byte[] { 0x00, 0xAA, 0xAA }, // cyan
+        new byte[] { 0xAA, 0x00, 0x00 }, // red
+        new byte[] { 0xAA, 0x00, 0xAA }, // magenta
+        new byte[] { 0xAA, 0x55, 0x00 }, // brown
+        new byte[] { 0xAA, 0xAA, 0xAA }, // light gray
+        new byte[] { 0x55, 0x55, 0x55 }, // dark gray
+        new byte[] { 0x55, 0x55, 0xFF }, // light blue
+        new byte[] { 0x55, 0xFF, 0x55 }, // light green
+        new byte[] { 0x55, 0xFF, 0xFF }, // light cyan
+        new byte[] { 0xFF, 0x55, 0x55 }, // light red
+        new byte[] { 0xFF, 0x55, 0xFF }, // light magenta
+        new byte[] { 0xFF, 0xFF, 0x55 }, // yellow
+        new byte[] { 0xFF, 0xFF, 0xFF }, // white
+    };
+
+    private static void TrueColorBytesToCGABytes(in byte[] input, ref byte[] output)
+    {
+        output = FindNearestColor(input, fullCGAColors);
+    }
+
+    private static readonly List<byte[]> c64Colors = new List<byte[]>() 
+    {
+        new byte[] { 0x00, 0x00, 0x00 }, // black
+        new byte[] { 0xFF, 0xFF, 0xFF }, // white
+        new byte[] { 0x88, 0x00, 0x00 }, // red
+        new byte[] { 0xAA, 0xFF, 0xEE }, // cyan
+        new byte[] { 0xCC, 0x44, 0xCC }, // violet / purple
+        new byte[] { 0x00, 0xCC, 0x55 }, // green
+        new byte[] { 0x00, 0x00, 0xAA }, // blue
+        new byte[] { 0xEE, 0xEE, 0x77 }, // yellow
+        new byte[] { 0xDD, 0x88, 0x55 }, // orange
+        new byte[] { 0x66, 0x44, 0x00 }, // brown
+        new byte[] { 0xFF, 0x77, 0x77 }, // light red
+        new byte[] { 0x33, 0x33, 0x33 }, // dark grey
+        new byte[] { 0x77, 0x77, 0x77 }, // grey
+        new byte[] { 0xAA, 0xFF, 0x66 }, // light green
+        new byte[] { 0x00, 0x88, 0xFF }, // light blue
+        new byte[] { 0xBB, 0xBB, 0xBB }, // light grey     
+    };
+
+    private static void TrueColorBytesToC64Bytes(in byte[] input, ref byte[] output)
+    {
+        output = FindNearestColor(input, c64Colors);
+    }
+
+    private static readonly List<byte[]> EPD7colorPallete = new List<byte[]>()
+    {
+        new byte[] { 0x00, 0x00, 0x00 }, // black
+        new byte[] { 0xFF, 0xFF, 0xFF }, // white
+        new byte[] { 0x00, 0xFF, 0x00 }, // green
+        new byte[] { 0x00, 0x00, 0xFF }, // blue
+        new byte[] { 0xFF, 0x00, 0x00 }, // red
+        new byte[] { 0xFF, 0xFF, 0x00 }, // yellow
+        new byte[] { 0xFF, 0x80, 0x00 }, // orange
+    };
+
+    private static void TrueColorBytesTo7Bytes(in byte[] input, ref byte[] output)
+    {
+        output = FindNearestColor(input, EPD7colorPallete);
+    }
+
+
+    private static byte[] FindNearestColor(byte[] actualColor, List<byte[]> allowedColors)
+    {
+        int index = 0;
+        uint distance = DistanceBetween24BitColors(actualColor, allowedColors[0]);
+        for (int i = 1; i < allowedColors.Count; i++)
+        {
+            uint possibleNewDistance = DistanceBetween24BitColors(actualColor, allowedColors[i]);
+            if (possibleNewDistance < distance)
+            {
+                distance = possibleNewDistance;
+                index = i;
+            }
+        }
+
+        return allowedColors[index];
+    }
+
+    private static uint DistanceBetween24BitColors(byte[] firstColors, byte[] secondColors)
+    {
+        int redDifference = firstColors[0] - secondColors[0];
+        int greenDifference = firstColors[1] - secondColors[1];
+        int blueDifference = firstColors[2] - secondColors[2];
+        return (uint)((redDifference * redDifference) + (greenDifference * greenDifference) + (blueDifference * blueDifference));
+    }
+    //private static readonly PngEncoder pngEncoder = new PngEncoder() { CompressionLevel = PngCompressionLevel.BestSpeed };
+    private static readonly BmpEncoder bmpEncoder = new BmpEncoder() { SupportTransparency = false, BitsPerPixel = BmpBitsPerPixel.Pixel24 };
+
+    private static readonly int byteAmountCutPoint = 256 * 1024;
+
+    private async Task Dither()
+    {
+        processing = true;
+        await Task.Delay(TimeSpan.FromSeconds(0.01));
+
+        Stopwatch stopwatch = null;
+        string pngStringData = null;
+        if (JSRuntime is Microsoft.JSInterop.WebAssembly.WebAssemblyJSRuntime webAssemblyJSRuntime)
+        {
+            stopwatch = Stopwatch.StartNew();
+            int length = await JSRuntime.InvokeAsync<int>("getImageDataLength", "canvasprocessed");
+            if (length > byteAmountCutPoint)
+            {
+                StringBuilder sb = new StringBuilder(length);
+                int index = 0;
+                while (length > 0)
+                {
+                    int howMuchToRead = length > byteAmountCutPoint ? byteAmountCutPoint : length;
+                    int end = index + howMuchToRead;
+                    sb.Append(webAssemblyJSRuntime.InvokeUnmarshalled<string, string, string, string>("copyImageDataAsPng", "canvasprocessed", index.ToString(), end.ToString()));
+                    length -= howMuchToRead;
+                    index += howMuchToRead;
+                }
+                pngStringData = sb.ToString();
+            }
+            else
+            {
+                pngStringData = webAssemblyJSRuntime.InvokeUnmarshalled<string, string, string, string>("copyImageDataAsPng", "canvasprocessed", 0.ToString(), length.ToString());
+            }
+            
+            stopwatch.Stop();
+            Console.WriteLine($"copyImageDataAsPng took {stopwatch.Elapsed}");
+        }
+        //string pngStringData = await JSRuntime.InvokeAsync<string>("copyImageDataAsPng", "canvasprocessed");
+        int base64Index = pngStringData.IndexOf("base64,");
+        int base64Length = "base64,".Length;
+        stopwatch = Stopwatch.StartNew();
+        byte[] finalPngData = System.Convert.FromBase64String(pngStringData.Remove(0, base64Index + base64Length));
+        stopwatch.Stop();
+        Console.WriteLine($"string to byte[] conversion took {stopwatch.Elapsed}");
+
+        stopwatch = Stopwatch.StartNew();
+        Image<Rgb24> imageOriginal = Image.Load<Rgb24>(finalPngData);
+        stopwatch.Stop();
+        Console.WriteLine($"loading image from Png bytes took {stopwatch.Elapsed}");
+
+        defaultImageAsBase64String = pngStringData;
+
+        stopwatch = Stopwatch.StartNew();
+        Image<Rgb24> imageForDithering = imageOriginal.Clone();
+        stopwatch.Stop();
+        Console.WriteLine($"Cloning an image took {stopwatch.Elapsed}");
+        
+        stopwatch = Stopwatch.StartNew();
+        int width = imageForDithering.Width;
+        int height = imageForDithering.Height;
+        int channelsPerPixel = 3;
+        byte[] returnValue = new byte[width * height * channelsPerPixel];
+        for (int y = 0; y < height; y++)
+        {
+            for (int x = 0; x < width; x++)
+            {
+                Rgb24 pixel = imageForDithering[x, y];
+                int arrayIndex = y * width * channelsPerPixel + x * channelsPerPixel;
+                returnValue[arrayIndex + 0] = pixel.R;
+                returnValue[arrayIndex + 1] = pixel.G;
+                returnValue[arrayIndex + 2] = pixel.B;
+            }
+        }
+        stopwatch.Stop();
+        Console.WriteLine($"Creating a copy part I for editing took {stopwatch.Elapsed}");
+
+        stopwatch = Stopwatch.StartNew();
+        TempByteImageFormat temp = new TempByteImageFormat(returnValue, width, height, channelsPerPixel);
+        stopwatch.Stop();
+        Console.WriteLine($"Creating a copy part II for editing took {stopwatch.Elapsed}");
+
+        stopwatch = Stopwatch.StartNew();
+        DitheringBase<byte> ditherer = GetDitherer(ditheringSettings.ditheringMethod, GetColorReductionMethod(colorReductionSettings.colorReductionMethod));
+        ditherer.DoDithering(temp);
+        stopwatch.Stop();
+        Console.WriteLine($"Dithering took {stopwatch.Elapsed}");
+
+        dithererName = $"{ditherer.GetMethodName()} dithering";
+        
+        stopwatch = Stopwatch.StartNew();
+        imageForDithering = Image.LoadPixelData<Rgb24>(temp.GetRawContent(), width, height);
+        stopwatch.Stop();
+        Console.WriteLine($"Copying dithered took {stopwatch.Elapsed}");
+
+        using (MemoryStream ms = new MemoryStream())
+        {
+            stopwatch = Stopwatch.StartNew();
+            await imageForDithering.SaveAsBmpAsync(ms, bmpEncoder);
+            stopwatch.Stop();
+            Console.WriteLine($"writing image to Png memorystream took {stopwatch.Elapsed}");
+
+            stopwatch = Stopwatch.StartNew();
+            ditheredImageAsBase64String = $"data:image/bmp;base64,{Convert.ToBase64String(ms.ToArray())}";
+            stopwatch.Stop();
+            Console.WriteLine($"writing string from Png memorystream took {stopwatch.Elapsed}");
+        }
+        processing = false;
+    }
+
+    private static readonly string oneByOneWhitePixelBase64DataPng = "data:image/bmp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==";
+
+    public enum DitheringMethod
+	{
+		All,
+		Atkinson,
+		Burkes,
+		Fake,
+		FloydSteinberg,
+		JarvisJudiceNinke,
+		Sierra,
+		SierraLite,
+		SierraTwoRow,
+		Stucki
+	}
+
+    public enum ColorReductionMethod
+    {
+        //WebSafe, // True color to 216 colors
+        //CGA, // True color to CGA colors (16 different colors)
+        //EGA, // True color to EGA colors (64 different colors)
+        //C64, // True color to C64 colors (16 different colors)
+        EINK7Color
+    }
+
+    class DitheringSettings
+    {
+        public DitheringMethod ditheringMethod { get; set; } = DitheringMethod.Atkinson;
+    }
+
+    class ColorReductionSettings
+    {
+        public ColorReductionMethod colorReductionMethod { get; set; } = ColorReductionMethod.EINK7Color;
+    }
+
+    private static Dithery.Shared.MainLayout singleton = null;
+
+    DitheringSettings ditheringSettings = new DitheringSettings();
+
+    ColorReductionSettings colorReductionSettings = new ColorReductionSettings();
+
+    bool processing = false;
+
+    private static bool imageIsLoaded = false;
+
+    private string defaultImageAsBase64String { get; set; } = oneByOneWhitePixelBase64DataPng;
+
+    private string ditheredImageAsBase64String { get; set; } = oneByOneWhitePixelBase64DataPng;
+
+    private string dithererName { get; set; } = "Dithered image";
+}
