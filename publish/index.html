@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>Image conversion</title>
+    <base href="/" />
+    <link href="css/mvp.css" rel="stylesheet" />
+</head>
+
+<body>
+    <noscript>Javascript is required for this website.</noscript>
+
+    <header>
+        <h1>BMP image conversion to E-INK display format</h1>
+    </header>
+
+    <main>
+        <section>
+            <form>
+                <label for="imagetodither">Choose an image to convert:</label>
+                <input type="file" id="imagetodither" name="imagetodither" accept="image/bmp">
+                <label id="imageresolution"></label>
+            </form>
+        </section>
+
+        <section>
+            <canvas id="inputCanvas" style="display:none"></canvas>
+            <img alt="Canvas processed image appears here" id="canvasprocessed" src="data:image/bmp;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg==" />
+        </section>
+    
+        <div id="app">Loading...</div>
+        <script src="_framework/blazor.webassembly.js" autostart="false"></script>
+        <script type="module">
+            import { BrotliDecode } from './decode.min.js';
+            Blazor.start({
+              loadBootResource: function (type, name, defaultUri, integrity) {
+                if (type !== 'dotnetjs' && location.hostname !== 'localhost') {
+                  return (async function () {
+                    const response = await fetch(defaultUri + '.br', { cache: 'no-cache' });
+                    if (!response.ok) {
+                      throw new Error(response.statusText);
+                    }
+                    const originalResponseBuffer = await response.arrayBuffer();
+                    const originalResponseArray = new Int8Array(originalResponseBuffer);
+                    const decompressedResponseArray = BrotliDecode(originalResponseArray);
+                    const contentType = type === 
+                      'dotnetwasm' ? 'application/wasm' : 'application/octet-stream';
+                    return new Response(decompressedResponseArray, 
+                      { headers: { 'content-type': contentType } });
+                  })();
+                }
+              }
+            });
+          </script>
+    </main>
+</body>
+<script type="text/javascript" src="fileToCanvas.js"></script>
+</html>
